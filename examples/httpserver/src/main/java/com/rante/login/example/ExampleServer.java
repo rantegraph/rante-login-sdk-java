@@ -22,10 +22,12 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.SecureRandom;
 import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 import java.util.Base64;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
 import java.util.logging.Logger;
@@ -69,8 +71,18 @@ public final class ExampleServer {
         volatile String accessToken;
         volatile String method;
         volatile Instant signedInAt;
+        volatile boolean newAccount;
         volatile Instant lastSeen = Instant.now();
     }
+
+    /** One account on this website, created by the person's first "Sign in with Rante" here and found by {@code sub} after that. */
+    private record Account(String id, String sub, String name, String email, Instant createdAt, Instant lastSignInAt) {
+    }
+
+    // This website's own accounts. A person's first "Sign in with Rante" here is their sign-up: the account is created from
+    // the claims they agreed to share, and every later sign-in finds it by `sub`. A real website keeps accounts in its
+    // database; this example keeps them in memory, so they're gone when the server restarts.
+    private final Map<String, Account> accounts = new ConcurrentHashMap<>();
 
     private final RanteLoginClient rante;
     private final String siteOrigin;
@@ -273,7 +285,8 @@ public final class ExampleServer {
         redirect(exchange, "/");
     }
 
-    // A new session for the person who signed in: its ID changes, so a session fixed before sign-in is worthless.
+    // A new session for the person who signed in: its ID changes, so a session fixed before sign-in is worthless. The
+    // sign-in also creates or finds their account on this website.
     private void startSession(HttpExchange exchange, ValidatedIdToken token, String accessToken, String method) {
         String old = cookie(exchange, SESSION_COOKIE);
         if (old != null) {
@@ -284,9 +297,29 @@ public final class ExampleServer {
         session.accessToken = accessToken;
         session.method = method;
         session.signedInAt = Instant.now();
+        session.newAccount = registerOrFind(token.claims());
         String id = randomToken();
         sessions.put(id, session);
         setSessionCookie(exchange, id);
+    }
+
+    /** Creates the person's account on the first sign-in, or finds it by {@code sub}; true when it was created now. */
+    private boolean registerOrFind(Map<String, Object> claims) {
+        String sub = String.valueOf(claims.get("sub"));
+        String name = claims.get("name") instanceof String nameValue ? nameValue : null;
+        String email = claims.get("email") instanceof String emailValue ? emailValue : null;
+        Instant now = Instant.now().truncatedTo(ChronoUnit.SECONDS);
+        boolean[] created = {false};
+        accounts.compute(sub, (key, existing) -> {
+            if (existing == null) {
+                created[0] = true;
+                return new Account(UUID.randomUUID().toString(), sub, name, email, now, now);
+            }
+            // Keep the details the person shares this time. Rante shares an email only once it's verified.
+            return new Account(existing.id(), sub, name != null ? name : existing.name(), email != null ? email : existing.email(),
+                    existing.createdAt(), now);
+        });
+        return created[0];
     }
 
     private Session session(HttpExchange exchange, boolean create) {
@@ -329,15 +362,38 @@ public final class ExampleServer {
                 + "<script src=\"/signin.js\"></script>");
     }
 
-    private static String signedInPage(Session session) {
+    private String signedInPage(Session session) {
         Object name = session.claims.get("name");
         return page("Signed in", "<h1>Signed in" + (name == null ? "" : " as " + escape(String.valueOf(name))) + "</h1>"
+                + "<p>Signed in with: <strong>" + escape(session.method) + "</strong>, " + session.signedInAt + "</p>"
+                + accountSection(session)
+                + "<h2>ID token</h2>"
                 + "<p>This server validated the ID token below. Use <code>sub</code> as the person's ID on this website: it is pairwise, so other "
                 + "organizations' apps see a different value.</p>"
-                + "<p>Signed in with: <strong>" + escape(session.method) + "</strong>, " + session.signedInAt + "</p>"
                 + table(session.claims)
                 + "<p><a href=\"/userinfo\">Show userinfo</a></p>"
                 + "<form method=\"post\" action=\"/auth/sign-out\"><button type=\"submit\">Sign out</button></form>");
+    }
+
+    private String accountSection(Session session) {
+        Account account = accounts.get(String.valueOf(session.claims.get("sub")));
+        if (account == null) {
+            return "<h2>Your account on this website</h2><p>Not found: this example keeps accounts in memory, and the server has restarted "
+                    + "since you signed in. Sign out and in again.</p>";
+        }
+        String status = session.newAccount
+                ? "Created at this sign-in from your Rante account: no separate sign-up form, and no password for this website."
+                : "Welcome back: this sign-in found your account by its Rante ID.";
+        return "<h2>Your account on this website</h2><p>" + escape(status) + "</p><table><tbody>"
+                + "<tr><th>Account ID</th><td>" + escape(account.id()) + "</td></tr>"
+                + "<tr><th>Linked Rante ID (<code>sub</code>)</th><td>" + escape(account.sub()) + "</td></tr>"
+                + "<tr><th>Name</th><td>" + escape(account.name() != null ? account.name() : "not shared") + "</td></tr>"
+                + "<tr><th>Email</th><td>" + escape(account.email() != null ? account.email()
+                        : "not shared (Rante shares an email only once it's verified)") + "</td></tr>"
+                + "<tr><th>Created</th><td>" + account.createdAt() + "</td></tr>"
+                + "<tr><th>Last sign-in</th><td>" + account.lastSignInAt() + "</td></tr>"
+                + "</tbody></table>"
+                + "<p>This example keeps accounts in memory. A real website stores them in its database, keyed by <code>sub</code>.</p>";
     }
 
     private static String table(Map<String, Object> claims) {
