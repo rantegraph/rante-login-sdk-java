@@ -7,7 +7,7 @@
 - validates the ID token before you trust who signed in;
 - calls the userinfo endpoint.
 
-It finishes sign-ins started by the [Rante Login browser SDK](https://github.com/rante-corporation/rante-login-sdk)
+It finishes sign-ins started by the [Rante Login browser SDK](https://github.com/rantegraph/rante-login-sdk)
 too, including FedCM sign-ins in Chrome and Edge.
 
 The SDK is a thin layer over the
@@ -21,7 +21,7 @@ The artifact isn't on Maven Central. Build it from a clone; the Maven wrapper do
 SHA-256:
 
 ```sh
-git clone https://github.com/rante-corporation/rante-login-sdk-java
+git clone https://github.com/rantegraph/rante-login-sdk-java
 cd rante-login-sdk-java
 ./mvnw install          # Windows: mvnw.cmd install
 ```

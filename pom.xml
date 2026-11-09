@@ -11,7 +11,7 @@
 
   <name>Rante Login SDK for Java</name>
   <description>"Sign in with Rante" for Java servers: authorize URL with PKCE, code exchange with private_key_jwt, ID token validation and userinfo, on the Nimbus OAuth 2.0 / OpenID Connect SDK.</description>
-  <url>https://github.com/rante-corporation/rante-login-sdk-java</url>
+  <url>https://github.com/rantegraph/rante-login-sdk-java</url>
 
   <licenses>
     <license>
